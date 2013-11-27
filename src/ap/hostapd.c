@@ -108,18 +108,9 @@ static void hostapd_reload_bss(struct hostapd_data *hapd)
 }
 
 
-int hostapd_reload_config(struct hostapd_iface *iface)
+static void hostapd_clear_old(struct hostapd_iface *iface)
 {
-	struct hostapd_data *hapd = iface->bss[0];
-	struct hostapd_config *newconf, *oldconf;
 	size_t j;
-
-	if (iface->interfaces == NULL ||
-	    iface->interfaces->config_read_cb == NULL)
-		return -1;
-	newconf = iface->interfaces->config_read_cb(iface->config_fname);
-	if (newconf == NULL)
-		return -1;
 
 	/*
 	 * Deauthenticate all stations since the new configuration may not
@@ -136,6 +127,31 @@ int hostapd_reload_config(struct hostapd_iface *iface)
 		radius_client_flush(iface->bss[j]->radius, 0);
 #endif /* CONFIG_NO_RADIUS */
 	}
+}
+
+
+int hostapd_reload_config(struct hostapd_iface *iface)
+{
+	struct hostapd_data *hapd = iface->bss[0];
+	struct hostapd_config *newconf, *oldconf;
+	size_t j;
+
+	if (iface->config_fname == NULL) {
+		/* Only in-memory config in use - assume it has been updated */
+		hostapd_clear_old(iface);
+		for (j = 0; j < iface->num_bss; j++)
+			hostapd_reload_bss(iface->bss[j]);
+		return 0;
+	}
+
+	if (iface->interfaces == NULL ||
+	    iface->interfaces->config_read_cb == NULL)
+		return -1;
+	newconf = iface->interfaces->config_read_cb(iface->config_fname);
+	if (newconf == NULL)
+		return -1;
+
+	hostapd_clear_old(iface);
 
 	oldconf = hapd->iconf;
 	iface->conf = newconf;
@@ -205,30 +221,6 @@ static int hostapd_broadcast_wep_set(struct hostapd_data *hapd)
 		errors++;
 	}
 
-	if (ssid->dyn_vlan_keys) {
-		size_t i;
-		for (i = 0; i <= ssid->max_dyn_vlan_keys; i++) {
-			const char *ifname;
-			struct hostapd_wep_keys *key = ssid->dyn_vlan_keys[i];
-			if (key == NULL)
-				continue;
-			ifname = hostapd_get_vlan_id_ifname(hapd->conf->vlan,
-							    i);
-			if (ifname == NULL)
-				continue;
-
-			idx = key->idx;
-			if (hostapd_drv_set_key(ifname, hapd, WPA_ALG_WEP,
-						broadcast_ether_addr, idx, 1,
-						NULL, 0, key->key[idx],
-						key->len[idx])) {
-				wpa_printf(MSG_WARNING, "Could not set "
-					   "dynamic VLAN WEP encryption.");
-				errors++;
-			}
-		}
-	}
-
 	return errors;
 }
 
@@ -273,6 +265,11 @@ static void hostapd_free_hapd_data(struct hostapd_data *hapd)
 #ifdef CONFIG_INTERWORKING
 	gas_serv_deinit(hapd);
 #endif /* CONFIG_INTERWORKING */
+
+#ifdef CONFIG_SQLITE
+	os_free(hapd->tmp_eap_user.identity);
+	os_free(hapd->tmp_eap_user.password);
+#endif /* CONFIG_SQLITE */
 }
 
 
@@ -785,7 +782,8 @@ static int hostapd_setup_bss(struct hostapd_data *hapd, int first)
 		return -1;
 	}
 
-	ieee802_11_set_beacon(hapd);
+	if (!hapd->conf->start_disabled)
+		ieee802_11_set_beacon(hapd);
 
 	if (hapd->wpa_auth && wpa_init_keys(hapd->wpa_auth) < 0)
 		return -1;
@@ -811,6 +809,74 @@ static void hostapd_tx_queue_params(struct hostapd_iface *iface)
 			wpa_printf(MSG_DEBUG, "Failed to set TX queue "
 				   "parameters for queue %d.", i);
 			/* Continue anyway */
+		}
+	}
+}
+
+
+static int hostapd_set_acl_list(struct hostapd_data *hapd,
+				struct mac_acl_entry *mac_acl,
+				int n_entries, u8 accept_acl)
+{
+	struct hostapd_acl_params *acl_params;
+	int i, err;
+
+	acl_params = os_zalloc(sizeof(*acl_params) +
+			       (n_entries * sizeof(acl_params->mac_acl[0])));
+	if (!acl_params)
+		return -ENOMEM;
+
+	for (i = 0; i < n_entries; i++)
+		os_memcpy(acl_params->mac_acl[i].addr, mac_acl[i].addr,
+			  ETH_ALEN);
+
+	acl_params->acl_policy = accept_acl;
+	acl_params->num_mac_acl = n_entries;
+
+	err = hostapd_drv_set_acl(hapd, acl_params);
+
+	os_free(acl_params);
+
+	return err;
+}
+
+
+static void hostapd_set_acl(struct hostapd_data *hapd)
+{
+	struct hostapd_config *conf = hapd->iconf;
+	int err;
+	u8 accept_acl;
+
+	if (hapd->iface->drv_max_acl_mac_addrs == 0)
+		return;
+	if (!(conf->bss->num_accept_mac || conf->bss->num_deny_mac))
+		return;
+
+	if (conf->bss->macaddr_acl == DENY_UNLESS_ACCEPTED) {
+		if (conf->bss->num_accept_mac) {
+			accept_acl = 1;
+			err = hostapd_set_acl_list(hapd, conf->bss->accept_mac,
+						   conf->bss->num_accept_mac,
+						   accept_acl);
+			if (err) {
+				wpa_printf(MSG_DEBUG, "Failed to set accept acl");
+				return;
+			}
+		} else {
+			wpa_printf(MSG_DEBUG, "Mismatch between ACL Policy & Accept/deny lists file");
+		}
+	} else if (conf->bss->macaddr_acl == ACCEPT_UNLESS_DENIED) {
+		if (conf->bss->num_deny_mac) {
+			accept_acl = 0;
+			err = hostapd_set_acl_list(hapd, conf->bss->deny_mac,
+						   conf->bss->num_deny_mac,
+						   accept_acl);
+			if (err) {
+				wpa_printf(MSG_DEBUG, "Failed to set deny acl");
+				return;
+			}
+		} else {
+			wpa_printf(MSG_DEBUG, "Mismatch between ACL Policy & Accept/deny lists file");
 		}
 	}
 }
@@ -853,6 +919,10 @@ static int setup_interface(struct hostapd_iface *iface)
 				   "channel. (%d)", ret);
 			return -1;
 		}
+		if (ret == 1) {
+			wpa_printf(MSG_DEBUG, "Interface initialization will be completed in a callback (ACS)");
+			return 0;
+		}
 		ret = hostapd_check_ht_capab(iface);
 		if (ret < 0)
 			return -1;
@@ -889,7 +959,11 @@ int hostapd_setup_interface_complete(struct hostapd_iface *iface, int err)
 		if (hostapd_set_freq(hapd, hapd->iconf->hw_mode, iface->freq,
 				     hapd->iconf->channel,
 				     hapd->iconf->ieee80211n,
-				     hapd->iconf->secondary_channel)) {
+				     hapd->iconf->ieee80211ac,
+				     hapd->iconf->secondary_channel,
+				     hapd->iconf->vht_oper_chwidth,
+				     hapd->iconf->vht_oper_centr_freq_seg0_idx,
+				     hapd->iconf->vht_oper_centr_freq_seg1_idx)) {
 			wpa_printf(MSG_ERROR, "Could not set channel for "
 				   "kernel driver");
 			return -1;
@@ -936,6 +1010,8 @@ int hostapd_setup_interface_complete(struct hostapd_iface *iface, int err)
 	hostapd_tx_queue_params(iface);
 
 	ap_list_init(iface);
+
+	hostapd_set_acl(hapd);
 
 	if (hostapd_driver_commit(hapd) < 0) {
 		wpa_printf(MSG_ERROR, "%s: Failed to commit driver "
@@ -1113,12 +1189,13 @@ int hostapd_reload_iface(struct hostapd_iface *hapd_iface)
 int hostapd_disable_iface(struct hostapd_iface *hapd_iface)
 {
 	size_t j;
-	struct hostapd_bss_config *bss = hapd_iface->bss[0]->conf;
+	struct hostapd_bss_config *bss;
 	const struct wpa_driver_ops *driver;
 	void *drv_priv;
 
 	if (hapd_iface == NULL)
 		return -1;
+	bss = hapd_iface->bss[0]->conf;
 	driver = hapd_iface->bss[0]->driver;
 	drv_priv = hapd_iface->bss[0]->drv_priv;
 
@@ -1373,8 +1450,10 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	/* Start accounting here, if IEEE 802.1X and WPA are not used.
 	 * IEEE 802.1X/WPA code will start accounting after the station has
 	 * been authorized. */
-	if (!hapd->conf->ieee802_1x && !hapd->conf->wpa)
+	if (!hapd->conf->ieee802_1x && !hapd->conf->wpa) {
+		os_get_time(&sta->connected_time);
 		accounting_sta_start(hapd, sta);
+	}
 
 	/* Start IEEE 802.1X authentication process for new stations */
 	ieee802_1x_new_station(hapd, sta);

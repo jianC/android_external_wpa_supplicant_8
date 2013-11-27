@@ -51,7 +51,8 @@ typedef enum hostap_security_policy {
 struct hostapd_ssid {
 	u8 ssid[HOSTAPD_MAX_SSID_LEN];
 	size_t ssid_len;
-	int ssid_set;
+	unsigned int ssid_set:1;
+	unsigned int utf8_ssid:1;
 
 	char vlan[IFNAMSIZ + 1];
 	secpolicy security_policy;
@@ -73,8 +74,6 @@ struct hostapd_ssid {
 #ifdef CONFIG_FULL_DYNAMIC_VLAN
 	char *vlan_tagged_interface;
 #endif /* CONFIG_FULL_DYNAMIC_VLAN */
-	struct hostapd_wep_keys **dyn_vlan_keys;
-	size_t max_dyn_vlan_keys;
 };
 
 
@@ -96,11 +95,17 @@ struct hostapd_vlan {
 };
 
 #define PMK_LEN 32
+struct hostapd_sta_wpa_psk_short {
+	struct hostapd_sta_wpa_psk_short *next;
+	u8 psk[PMK_LEN];
+};
+
 struct hostapd_wpa_psk {
 	struct hostapd_wpa_psk *next;
 	int group;
 	u8 psk[PMK_LEN];
 	u8 addr[ETH_ALEN];
+	u8 p2p_dev_addr[ETH_ALEN];
 };
 
 struct hostapd_eap_user {
@@ -174,6 +179,7 @@ struct hostapd_nai_realm_data {
 struct hostapd_bss_config {
 	char iface[IFNAMSIZ + 1];
 	char bridge[IFNAMSIZ + 1];
+	char vlan_bridge[IFNAMSIZ + 1];
 	char wds_bridge[IFNAMSIZ + 1];
 
 	enum hostapd_logger_level logger_syslog_level, logger_stdout_level;
@@ -192,6 +198,7 @@ struct hostapd_bss_config {
 	int eap_server; /* Use internal EAP server instead of external
 			 * RADIUS server */
 	struct hostapd_eap_user *eap_user;
+	char *eap_user_sqlite;
 	char *eap_sim_db;
 	struct hostapd_ip_addr own_ip_addr;
 	char *nas_identifier;
@@ -235,6 +242,7 @@ struct hostapd_bss_config {
 	int num_deny_mac;
 	int wds_sta;
 	int isolate;
+	int start_disabled;
 
 	int auth_algs; /* bitfield of allowed IEEE 802.11 authentication
 			* algorithms, WPA_AUTH_ALG_{OPEN,SHARED,LEAP} */
@@ -287,6 +295,7 @@ struct hostapd_bss_config {
 	char *private_key;
 	char *private_key_passwd;
 	int check_crl;
+	char *ocsp_stapling_response;
 	char *dh_file;
 	u8 *pac_opaque_encr_key;
 	u8 *eap_fast_a_id;
@@ -317,7 +326,7 @@ struct hostapd_bss_config {
 	int wmm_enabled;
 	int wmm_uapsd;
 
-	struct hostapd_vlan *vlan, *vlan_tail;
+	struct hostapd_vlan *vlan;
 
 	macaddr bssid;
 
@@ -333,6 +342,7 @@ struct hostapd_bss_config {
 
 	int wps_state;
 #ifdef CONFIG_WPS
+	int wps_independent;
 	int ap_setup_locked;
 	u8 uuid[16];
 	char *wps_pin_requests;
@@ -349,6 +359,7 @@ struct hostapd_bss_config {
 	u8 *extra_cred;
 	size_t extra_cred_len;
 	int wps_cred_processing;
+	int force_per_enrollee_psk;
 	u8 *ap_settings;
 	size_t ap_settings_len;
 	char *upnp_iface;
@@ -358,12 +369,14 @@ struct hostapd_bss_config {
 	char *model_url;
 	char *upc;
 	struct wpabuf *wps_vendor_ext[MAX_WPS_VENDOR_EXTENSIONS];
+	int wps_nfc_pw_from_config;
 	int wps_nfc_dev_pw_id;
 	struct wpabuf *wps_nfc_dh_pubkey;
 	struct wpabuf *wps_nfc_dh_privkey;
 	struct wpabuf *wps_nfc_dev_pw;
 #endif /* CONFIG_WPS */
 	int pbc_in_m1;
+	char *server_id;
 
 #define P2P_ENABLED BIT(0)
 #define P2P_GROUP_OWNER BIT(1)
@@ -384,6 +397,8 @@ struct hostapd_bss_config {
 	/* IEEE 802.11v */
 	int time_advertisement;
 	char *time_zone;
+	int wnm_sleep_mode;
+	int bss_transition;
 
 	/* IEEE 802.11u - Interworking */
 	int interworking;
@@ -446,6 +461,9 @@ struct hostapd_bss_config {
 #endif /* CONFIG_RADIUS_TEST */
 
 	struct wpabuf *vendor_elements;
+
+	unsigned int sae_anti_clogging_threshold;
+	int *sae_groups;
 };
 
 
@@ -484,6 +502,8 @@ struct hostapd_config {
 
 	int ieee80211d;
 
+	int ieee80211h; /* DFS */
+
 	struct hostapd_tx_queue_params tx_queue[NUM_TX_QUEUES];
 
 	/*
@@ -505,6 +525,19 @@ struct hostapd_config {
 	int require_vht;
 	u8 vht_oper_chwidth;
 	u8 vht_oper_centr_freq_seg0_idx;
+	u8 vht_oper_centr_freq_seg1_idx;
+
+#ifdef CONFIG_TESTING_OPTIONS
+	double ignore_probe_probability;
+	double ignore_auth_probability;
+	double ignore_assoc_probability;
+	double ignore_reassoc_probability;
+	double corrupt_gtk_rekey_mic_probability;
+#endif /* CONFIG_TESTING_OPTIONS */
+
+#ifdef CONFIG_ACS
+	unsigned int acs_num_scans;
+#endif /* CONFIG_ACS */
 };
 
 
@@ -519,13 +552,12 @@ int hostapd_rate_found(int *list, int rate);
 int hostapd_wep_key_cmp(struct hostapd_wep_keys *a,
 			struct hostapd_wep_keys *b);
 const u8 * hostapd_get_psk(const struct hostapd_bss_config *conf,
-			   const u8 *addr, const u8 *prev_psk);
+			   const u8 *addr, const u8 *p2p_dev_addr,
+			   const u8 *prev_psk);
 int hostapd_setup_wpa_psk(struct hostapd_bss_config *conf);
+int hostapd_vlan_id_valid(struct hostapd_vlan *vlan, int vlan_id);
 const char * hostapd_get_vlan_id_ifname(struct hostapd_vlan *vlan,
 					int vlan_id);
-const struct hostapd_eap_user *
-hostapd_get_eap_user(const struct hostapd_bss_config *conf, const u8 *identity,
-		     size_t identity_len, int phase2);
 struct hostapd_radius_attr *
 hostapd_config_get_radius_attr(struct hostapd_radius_attr *attr, u8 type);
 

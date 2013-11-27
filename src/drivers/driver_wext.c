@@ -509,11 +509,9 @@ static void wpa_driver_wext_event_wireless(struct wpa_driver_wext_data *drv,
 					   "IWEVCUSTOM length");
 				return;
 			}
-			buf = os_malloc(iwe->u.data.length + 1);
+			buf = dup_binstr(custom, iwe->u.data.length);
 			if (buf == NULL)
 				return;
-			os_memcpy(buf, custom, iwe->u.data.length);
-			buf[iwe->u.data.length] = '\0';
 			wpa_driver_wext_event_wireless_custom(drv->ctx, buf);
 			os_free(buf);
 			break;
@@ -1719,7 +1717,7 @@ static int wpa_driver_wext_set_key_ext(void *priv, enum wpa_alg alg,
 	case WPA_ALG_PMK:
 		ext->alg = IW_ENCODE_ALG_PMK;
 		break;
-#ifdef CONFIG_IEEE80211W
+#ifdef CONFIG_IEEE80211W_DISABLE
 	case WPA_ALG_IGTK:
 		ext->alg = IW_ENCODE_ALG_AES_CMAC;
 		break;
@@ -1959,18 +1957,6 @@ static int wpa_driver_wext_deauthenticate(void *priv, const u8 *addr,
 }
 
 
-static int wpa_driver_wext_disassociate(void *priv, const u8 *addr,
-					int reason_code)
-{
-	struct wpa_driver_wext_data *drv = priv;
-	int ret;
-	wpa_printf(MSG_DEBUG, "%s", __FUNCTION__);
-	ret = wpa_driver_wext_mlme(drv, addr, IW_MLME_DISASSOC, reason_code);
-	wpa_driver_wext_disconnect(drv);
-	return ret;
-}
-
-
 static int wpa_driver_wext_set_gen_ie(void *priv, const u8 *ie,
 				      size_t ie_len)
 {
@@ -2157,7 +2143,7 @@ int wpa_driver_wext_associate(void *priv,
 					   IW_AUTH_RX_UNENCRYPTED_EAPOL,
 					   allow_unencrypted_eapol) < 0)
 		ret = -1;
-#ifdef CONFIG_IEEE80211W
+#ifdef CONFIG_IEEE80211W_DISABLE
 	switch (params->mgmt_frame_protection) {
 	case NO_MGMT_FRAME_PROTECTION:
 		value = IW_AUTH_MFP_DISABLED;
@@ -2506,7 +2492,6 @@ const struct wpa_driver_ops wpa_driver_wext_ops = {
 	.scan2 = wpa_driver_wext_scan,
 	.get_scan_results2 = wpa_driver_wext_get_scan_results,
 	.deauthenticate = wpa_driver_wext_deauthenticate,
-	.disassociate = wpa_driver_wext_disassociate,
 	.associate = wpa_driver_wext_associate,
 	.init = wpa_driver_wext_init,
 	.deinit = wpa_driver_wext_deinit,

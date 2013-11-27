@@ -80,6 +80,10 @@ dbus_bool_t wpas_dbus_getter_interfaces(DBusMessageIter *iter,
 dbus_bool_t wpas_dbus_getter_eap_methods(DBusMessageIter *iter,
 					 DBusError *error, void *user_data);
 
+dbus_bool_t wpas_dbus_getter_global_capabilities(DBusMessageIter *iter,
+						 DBusError *error,
+						 void *user_data);
+
 DBusMessage * wpas_dbus_handler_scan(DBusMessage *message,
 				     struct wpa_supplicant *wpa_s);
 
@@ -123,6 +127,12 @@ DBusMessage * wpas_dbus_handler_flush_bss(DBusMessage *message,
 
 DBusMessage * wpas_dbus_handler_autoscan(DBusMessage *message,
 					 struct wpa_supplicant *wpa_s);
+
+DBusMessage * wpas_dbus_handler_eap_logoff(DBusMessage *message,
+					   struct wpa_supplicant *wpa_s);
+
+DBusMessage * wpas_dbus_handler_eap_logon(DBusMessage *message,
+					  struct wpa_supplicant *wpa_s);
 
 dbus_bool_t wpas_dbus_getter_capabilities(DBusMessageIter *iter,
 					  DBusError *error, void *user_data);
@@ -236,6 +246,9 @@ dbus_bool_t wpas_dbus_getter_bss_wpa(DBusMessageIter *iter, DBusError *error,
 				     void *user_data);
 
 dbus_bool_t wpas_dbus_getter_bss_rsn(DBusMessageIter *iter, DBusError *error,
+				     void *user_data);
+
+dbus_bool_t wpas_dbus_getter_bss_wps(DBusMessageIter *iter, DBusError *error,
 				     void *user_data);
 
 dbus_bool_t wpas_dbus_getter_bss_ies(DBusMessageIter *iter, DBusError *error,

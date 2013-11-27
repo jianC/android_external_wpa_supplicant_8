@@ -18,7 +18,7 @@
 
 static const char *hostapd_cli_version =
 "hostapd_cli v" VERSION_STR "\n"
-"Copyright (c) 2004-2012, Jouni Malinen <j@w1.fi> and contributors";
+"Copyright (c) 2004-2013, Jouni Malinen <j@w1.fi> and contributors";
 
 
 static const char *hostapd_cli_license =
@@ -72,9 +72,6 @@ static const char *commands_help =
 "   wps_check_pin <PIN>  verify PIN checksum\n"
 "   wps_pbc              indicate button pushed to initiate PBC\n"
 "   wps_cancel           cancel the pending WPS operation\n"
-#ifdef CONFIG_WPS_OOB
-"   wps_oob <type> <path> <method>  use WPS with out-of-band (UFD)\n"
-#endif /* CONFIG_WPS_OOB */
 #ifdef CONFIG_WPS_NFC
 "   wps_nfc_tag_read <hexdump>  report read NFC tag with WPS data\n"
 "   wps_nfc_config_token <WPS/NDEF>  build NFC configuration token\n"
@@ -82,6 +79,7 @@ static const char *commands_help =
 #endif /* CONFIG_WPS_NFC */
 "   wps_ap_pin <cmd> [params..]  enable/disable AP PIN\n"
 "   wps_config <SSID> <auth> <encr> <key>  configure AP\n"
+"   wps_get_status       show current WPS status\n"
 #endif /* CONFIG_WPS */
 "   get_config           show current configuration\n"
 "   help                 show this usage help\n"
@@ -410,40 +408,6 @@ static int hostapd_cli_cmd_wps_cancel(struct wpa_ctrl *ctrl, int argc,
 }
 
 
-#ifdef CONFIG_WPS_OOB
-static int hostapd_cli_cmd_wps_oob(struct wpa_ctrl *ctrl, int argc,
-				   char *argv[])
-{
-	char cmd[256];
-	int res;
-
-	if (argc != 3 && argc != 4) {
-		printf("Invalid WPS_OOB command: need three or four "
-		       "arguments:\n"
-		       "- DEV_TYPE: use 'ufd' or 'nfc'\n"
-		       "- PATH: path of OOB device like '/mnt'\n"
-		       "- METHOD: OOB method 'pin-e' or 'pin-r', "
-		       "'cred'\n"
-		       "- DEV_NAME: (only for NFC) device name like "
-		       "'pn531'\n");
-		return -1;
-	}
-
-	if (argc == 3)
-		res = os_snprintf(cmd, sizeof(cmd), "WPS_OOB %s %s %s",
-				  argv[0], argv[1], argv[2]);
-	else
-		res = os_snprintf(cmd, sizeof(cmd), "WPS_OOB %s %s %s %s",
-				  argv[0], argv[1], argv[2], argv[3]);
-	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
-		printf("Too long WPS_OOB command.\n");
-		return -1;
-	}
-	return wpa_ctrl_command(ctrl, cmd);
-}
-#endif /* CONFIG_WPS_OOB */
-
-
 #ifdef CONFIG_WPS_NFC
 static int hostapd_cli_cmd_wps_nfc_tag_read(struct wpa_ctrl *ctrl, int argc,
 					    char *argv[])
@@ -512,6 +476,29 @@ static int hostapd_cli_cmd_wps_nfc_token(struct wpa_ctrl *ctrl,
 	}
 	return wpa_ctrl_command(ctrl, cmd);
 }
+
+
+static int hostapd_cli_cmd_nfc_get_handover_sel(struct wpa_ctrl *ctrl,
+						int argc, char *argv[])
+{
+	char cmd[64];
+	int res;
+
+	if (argc != 2) {
+		printf("Invalid 'nfc_get_handover_sel' command - two arguments "
+		       "are required.\n");
+		return -1;
+	}
+
+	res = os_snprintf(cmd, sizeof(cmd), "NFC_GET_HANDOVER_SEL %s %s",
+			  argv[0], argv[1]);
+	if (res < 0 || (size_t) res >= sizeof(cmd) - 1) {
+		printf("Too long NFC_GET_HANDOVER_SEL command.\n");
+		return -1;
+	}
+	return wpa_ctrl_command(ctrl, cmd);
+}
+
 #endif /* CONFIG_WPS_NFC */
 
 
@@ -533,6 +520,13 @@ static int hostapd_cli_cmd_wps_ap_pin(struct wpa_ctrl *ctrl, int argc,
 	else
 		snprintf(buf, sizeof(buf), "WPS_AP_PIN %s", argv[0]);
 	return wpa_ctrl_command(ctrl, buf);
+}
+
+
+static int hostapd_cli_cmd_wps_get_status(struct wpa_ctrl *ctrl, int argc,
+					  char *argv[])
+{
+	return wpa_ctrl_command(ctrl, "WPS_GET_STATUS");
 }
 
 
@@ -581,20 +575,40 @@ static int hostapd_cli_cmd_wps_config(struct wpa_ctrl *ctrl, int argc,
 #endif /* CONFIG_WPS */
 
 
+static int hostapd_cli_cmd_disassoc_imminent(struct wpa_ctrl *ctrl, int argc,
+					     char *argv[])
+{
+	char buf[300];
+	int res;
+
+	if (argc < 2) {
+		printf("Invalid 'disassoc_imminent' command - two arguments "
+		       "(STA addr and Disassociation Timer) are needed\n");
+		return -1;
+	}
+
+	res = os_snprintf(buf, sizeof(buf), "DISASSOC_IMMINENT %s %s",
+			  argv[0], argv[1]);
+	if (res < 0 || res >= (int) sizeof(buf))
+		return -1;
+	return wpa_ctrl_command(ctrl, buf);
+}
+
+
 static int hostapd_cli_cmd_ess_disassoc(struct wpa_ctrl *ctrl, int argc,
 					char *argv[])
 {
 	char buf[300];
 	int res;
 
-	if (argc < 2) {
-		printf("Invalid 'ess_disassoc' command - two arguments (STA "
-		       "addr and URL) are needed\n");
+	if (argc < 3) {
+		printf("Invalid 'ess_disassoc' command - three arguments (STA "
+		       "addr, disassoc timer, and URL) are needed\n");
 		return -1;
 	}
 
-	res = os_snprintf(buf, sizeof(buf), "ESS_DISASSOC %s %s",
-			  argv[0], argv[1]);
+	res = os_snprintf(buf, sizeof(buf), "ESS_DISASSOC %s %s %s",
+			  argv[0], argv[1], argv[2]);
 	if (res < 0 || res >= (int) sizeof(buf))
 		return -1;
 	return wpa_ctrl_command(ctrl, buf);
@@ -809,17 +823,17 @@ static struct hostapd_cli_cmd hostapd_cli_commands[] = {
 	{ "wps_check_pin", hostapd_cli_cmd_wps_check_pin },
 	{ "wps_pbc", hostapd_cli_cmd_wps_pbc },
 	{ "wps_cancel", hostapd_cli_cmd_wps_cancel },
-#ifdef CONFIG_WPS_OOB
-	{ "wps_oob", hostapd_cli_cmd_wps_oob },
-#endif /* CONFIG_WPS_OOB */
 #ifdef CONFIG_WPS_NFC
 	{ "wps_nfc_tag_read", hostapd_cli_cmd_wps_nfc_tag_read },
 	{ "wps_nfc_config_token", hostapd_cli_cmd_wps_nfc_config_token },
 	{ "wps_nfc_token", hostapd_cli_cmd_wps_nfc_token },
+	{ "nfc_get_handover_sel", hostapd_cli_cmd_nfc_get_handover_sel },
 #endif /* CONFIG_WPS_NFC */
 	{ "wps_ap_pin", hostapd_cli_cmd_wps_ap_pin },
 	{ "wps_config", hostapd_cli_cmd_wps_config },
+	{ "wps_get_status", hostapd_cli_cmd_wps_get_status },
 #endif /* CONFIG_WPS */
+	{ "disassoc_imminent", hostapd_cli_cmd_disassoc_imminent },
 	{ "ess_disassoc", hostapd_cli_cmd_ess_disassoc },
 	{ "get_config", hostapd_cli_cmd_get_config },
 	{ "help", hostapd_cli_cmd_help },

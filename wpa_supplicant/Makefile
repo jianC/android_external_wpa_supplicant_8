@@ -126,6 +126,10 @@ ifdef CONFIG_HT_OVERRIDES
 CFLAGS += -DCONFIG_HT_OVERRIDES
 endif
 
+ifdef CONFIG_VHT_OVERRIDES
+CFLAGS += -DCONFIG_VHT_OVERRIDES
+endif
+
 ifndef CONFIG_BACKEND
 CONFIG_BACKEND=file
 endif
@@ -172,8 +176,15 @@ NEED_SHA256=y
 NEED_AES_OMAC1=y
 endif
 
-ifdef CONFIG_IEEE80211V
-CFLAGS += -DCONFIG_IEEE80211V
+ifdef CONFIG_SAE
+CFLAGS += -DCONFIG_SAE
+OBJS += ../src/common/sae.o
+NEED_ECC=y
+NEED_DH_GROUPS=y
+endif
+
+ifdef CONFIG_WNM
+CFLAGS += -DCONFIG_WNM
 OBJS += wnm_sta.o
 endif
 
@@ -204,7 +215,7 @@ NEED_SHA1=y
 NEED_MD5=y
 NEED_RC4=y
 else
-CFLAGS += -DCONFIG_NO_WPA -DCONFIG_NO_WPA2
+CFLAGS += -DCONFIG_NO_WPA
 endif
 
 ifdef CONFIG_IBSS_RSN
@@ -252,10 +263,6 @@ ifdef CONFIG_INTERWORKING
 OBJS += interworking.o
 CFLAGS += -DCONFIG_INTERWORKING
 NEED_GAS=y
-endif
-
-ifdef CONFIG_NO_WPA2
-CFLAGS += -DCONFIG_NO_WPA2
 endif
 
 include ../src/drivers/drivers.mak
@@ -475,6 +482,13 @@ CONFIG_EAP_SIM_COMMON=y
 NEED_AES_CBC=y
 endif
 
+ifdef CONFIG_EAP_PROXY
+CFLAGS += -DCONFIG_EAP_PROXY
+OBJS += ../src/eap_peer/eap_proxy_$(CONFIG_EAP_PROXY).o
+include eap_proxy_$(CONFIG_EAP_PROXY).mk
+CONFIG_IEEE8021X_EAPOL=y
+endif
+
 ifdef CONFIG_EAP_AKA_PRIME
 # EAP-AKA'
 ifeq ($(CONFIG_EAP_AKA_PRIME), dyn)
@@ -556,8 +570,24 @@ endif
 ifdef CONFIG_EAP_PWD
 CFLAGS += -DEAP_PWD
 OBJS += ../src/eap_peer/eap_pwd.o ../src/eap_common/eap_pwd_common.o
-OBJS_h += ../src/eap_server/eap_pwd.o
+OBJS_h += ../src/eap_server/eap_server_pwd.o
 CONFIG_IEEE8021X_EAPOL=y
+NEED_SHA256=y
+endif
+
+ifdef CONFIG_EAP_EKE
+# EAP-EKE
+ifeq ($(CONFIG_EAP_EKE), dyn)
+CFLAGS += -DEAP_EKE_DYNAMIC
+EAPDYN += ../src/eap_peer/eap_eke.so
+else
+CFLAGS += -DEAP_EKE
+OBJS += ../src/eap_peer/eap_eke.o ../src/eap_common/eap_eke_common.o
+OBJS_h += ../src/eap_server/eap_server_eke.o
+endif
+CONFIG_IEEE8021X_EAPOL=y
+NEED_DH_GROUPS=y
+NEED_DH_GROUPS_ALL=y
 NEED_SHA256=y
 endif
 
@@ -588,25 +618,10 @@ NEED_80211_COMMON=y
 NEED_AES_CBC=y
 NEED_MODEXP=y
 
-ifdef CONFIG_WPS_UFD
-CFLAGS += -DCONFIG_WPS_UFD
-OBJS += ../src/wps/wps_ufd.o
-NEED_WPS_OOB=y
-endif
-
 ifdef CONFIG_WPS_NFC
 CFLAGS += -DCONFIG_WPS_NFC
 OBJS += ../src/wps/ndef.o
-OBJS += ../src/wps/wps_nfc.o
 NEED_WPS_OOB=y
-ifdef CONFIG_WPS_NFC_PN531
-PN531_PATH ?= /usr/local/src/nfc
-CFLAGS += -DCONFIG_WPS_NFC_PN531
-CFLAGS += -I${PN531_PATH}/inc
-OBJS += ../src/wps/wps_nfc_pn531.o
-LIBS += ${PN531_PATH}/lib/wpsnfc.dll
-LIBS += ${PN531_PATH}/lib/libnfc_mapping_pn53x.dll
-endif
 endif
 
 ifdef NEED_WPS_OOB
@@ -732,8 +747,12 @@ OBJS += ../src/ap/ieee802_11_shared.o
 OBJS += ../src/ap/drv_callbacks.o
 OBJS += ../src/ap/ap_drv_ops.o
 OBJS += ../src/ap/beacon.o
+OBJS += ../src/ap/eap_user_db.o
 ifdef CONFIG_IEEE80211N
 OBJS += ../src/ap/ieee802_11_ht.o
+endif
+ifdef CONFIG_WNM
+OBJS += ../src/ap/wnm_ap.o
 endif
 ifdef CONFIG_CTRL_IFACE
 OBJS += ../src/ap/ctrl_iface_ap.o
@@ -746,10 +765,6 @@ OBJS += ../src/eap_server/eap_server_methods.o
 
 ifdef CONFIG_IEEE80211N
 CFLAGS += -DCONFIG_IEEE80211N
-endif
-
-ifdef CONFIG_WNM
-CFLAGS += -DCONFIG_WNM
 endif
 
 ifdef NEED_AP_MLME
@@ -870,6 +885,8 @@ OBJS += ../src/eap_peer/eap_tls_common.o
 OBJS_h += ../src/eap_server/eap_server_tls_common.o
 ifndef CONFIG_FIPS
 NEED_TLS_PRF=y
+NEED_SHA1=y
+NEED_MD5=y
 endif
 endif
 
@@ -1189,6 +1206,10 @@ OBJS += ../src/crypto/dh_group5.o
 endif
 endif
 
+ifdef NEED_ECC
+CFLAGS += -DCONFIG_ECC
+endif
+
 ifdef CONFIG_NO_RANDOM_POOL
 CFLAGS += -DCONFIG_NO_RANDOM_POOL
 else
@@ -1416,6 +1437,7 @@ CFLAGS += -DCONFIG_OFFCHANNEL
 endif
 
 OBJS += ../src/drivers/driver_common.o
+OBJS_priv += ../src/drivers/driver_common.o
 
 OBJS_wpa_rm := ctrl_iface.o ctrl_iface_unix.o
 OBJS_wpa := $(filter-out $(OBJS_wpa_rm),$(OBJS)) $(OBJS_h) tests/test_wpa.o
@@ -1570,6 +1592,10 @@ eap_wsc.so: ../src/eap_peer/eap_wsc.c ../src/eap_common/eap_wsc_common.c ../src/
 eap_ikev2.so: ../src/eap_peer/eap_ikev2.c ../src/eap_peer/ikev2.c ../src/eap_common/eap_ikev2_common.o ../src/eap_common/ikev2_common.c
 	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -rdynamic -fPIC $^ \
 		-Deap_peer_ikev2_register=eap_peer_method_dynamic_init
+
+eap_eke.so: ../src/eap_peer/eap_eke.c ../src/eap_common/eap_eke_common.c
+	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -rdynamic -fPIC $^ \
+		-Deap_peer_eke_register=eap_peer_method_dynamic_init
 
 %.so: %.c
 	$(CC) $(LDFLAGS) -o $@ $(CFLAGS) -shared -rdynamic -fPIC $< \

@@ -62,7 +62,8 @@ struct sta_info {
 	u8 previous_ap[6];
 
 	enum {
-		STA_NULLFUNC = 0, STA_DISASSOC, STA_DEAUTH, STA_REMOVE
+		STA_NULLFUNC = 0, STA_DISASSOC, STA_DEAUTH, STA_REMOVE,
+		STA_DISASSOC_FROM_CLI
 	} timeout_next;
 
 	u16 deauth_reason;
@@ -95,7 +96,8 @@ struct sta_info {
 	struct hostapd_ssid *ssid_probe; /* SSID selection based on ProbeReq */
 
 	int vlan_id;
-	u8 *psk; /* PSK from RADIUS authentication server */
+	 /* PSKs from RADIUS authentication server */
+	struct hostapd_sta_wpa_psk_short *psk;
 
 	char *identity; /* User-Name from RADIUS */
 	char *radius_cui; /* Chargeable-User-Identity from RADIUS */
@@ -121,6 +123,13 @@ struct sta_info {
 
 	struct wpabuf *wps_ie; /* WPS IE from (Re)Association Request */
 	struct wpabuf *p2p_ie; /* P2P IE from (Re)Association Request */
+	struct wpabuf *hs20_ie; /* HS 2.0 IE from (Re)Association Request */
+
+	struct os_time connected_time;
+
+#ifdef CONFIG_SAE
+	struct sae_data *sae;
+#endif /* CONFIG_SAE */
 };
 
 
@@ -147,6 +156,7 @@ int ap_for_each_sta(struct hostapd_data *hapd,
 			      void *ctx),
 		    void *ctx);
 struct sta_info * ap_get_sta(struct hostapd_data *hapd, const u8 *sta);
+struct sta_info * ap_get_sta_p2p(struct hostapd_data *hapd, const u8 *addr);
 void ap_sta_hash_add(struct hostapd_data *hapd, struct sta_info *sta);
 void ap_free_sta(struct hostapd_data *hapd, struct sta_info *sta);
 void hostapd_free_stas(struct hostapd_data *hapd);

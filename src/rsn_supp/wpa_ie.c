@@ -83,6 +83,8 @@ static int wpa_gen_wpa_ie_wpa(u8 *wpa_ie, size_t wpa_ie_len,
 		RSN_SELECTOR_PUT(pos, WPA_AUTH_KEY_MGMT_PSK_OVER_802_1X);
 	} else if (key_mgmt == WPA_KEY_MGMT_WPA_NONE) {
 		RSN_SELECTOR_PUT(pos, WPA_AUTH_KEY_MGMT_NONE);
+	} else if (key_mgmt == WPA_KEY_MGMT_CCKM) {
+		RSN_SELECTOR_PUT(pos, WPA_AUTH_KEY_MGMT_CCKM);
 	} else {
 		wpa_printf(MSG_WARNING, "Invalid key management type (%d).",
 			   key_mgmt);
@@ -105,7 +107,6 @@ static int wpa_gen_wpa_ie_rsn(u8 *rsn_ie, size_t rsn_ie_len,
 			      int key_mgmt, int mgmt_group_cipher,
 			      struct wpa_sm *sm)
 {
-#ifndef CONFIG_NO_WPA2
 	u8 *pos;
 	struct rsn_ie_hdr *hdr;
 	u16 capab;
@@ -152,6 +153,8 @@ static int wpa_gen_wpa_ie_rsn(u8 *rsn_ie, size_t rsn_ie_len,
 		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_UNSPEC_802_1X);
 	} else if (key_mgmt == WPA_KEY_MGMT_PSK) {
 		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_PSK_OVER_802_1X);
+	} else if (key_mgmt == WPA_KEY_MGMT_CCKM) {
+		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_CCKM);
 #ifdef CONFIG_IEEE80211R
 	} else if (key_mgmt == WPA_KEY_MGMT_FT_IEEE8021X) {
 		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_FT_802_1X);
@@ -164,6 +167,12 @@ static int wpa_gen_wpa_ie_rsn(u8 *rsn_ie, size_t rsn_ie_len,
 	} else if (key_mgmt == WPA_KEY_MGMT_PSK_SHA256) {
 		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_PSK_SHA256);
 #endif /* CONFIG_IEEE80211W */
+#ifdef CONFIG_SAE
+	} else if (key_mgmt == WPA_KEY_MGMT_SAE) {
+		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_SAE);
+	} else if (key_mgmt == WPA_KEY_MGMT_FT_SAE) {
+		RSN_SELECTOR_PUT(pos, RSN_AUTH_KEY_MGMT_FT_SAE);
+#endif /* CONFIG_SAE */
 	} else {
 		wpa_printf(MSG_WARNING, "Invalid key management type (%d).",
 			   key_mgmt);
@@ -210,9 +219,6 @@ static int wpa_gen_wpa_ie_rsn(u8 *rsn_ie, size_t rsn_ie_len,
 	WPA_ASSERT((size_t) (pos - rsn_ie) <= rsn_ie_len);
 
 	return pos - rsn_ie;
-#else /* CONFIG_NO_WPA2 */
-	return -1;
-#endif /* CONFIG_NO_WPA2 */
 }
 
 
@@ -417,6 +423,17 @@ int wpa_supplicant_parse_ies(const u8 *buf, size_t len,
 		} else if (*pos == WLAN_EID_EXT_SUPP_RATES) {
 			ie->ext_supp_rates = pos;
 			ie->ext_supp_rates_len = pos[1] + 2;
+		} else if (*pos == WLAN_EID_HT_CAP) {
+			ie->ht_capabilities = pos + 2;
+			ie->ht_capabilities_len = pos[1];
+		} else if (*pos == WLAN_EID_VHT_AID) {
+			if (pos[1] >= 2)
+				ie->aid = WPA_GET_LE16(pos + 2);
+		} else if (*pos == WLAN_EID_VHT_CAP) {
+			ie->vht_capabilities = pos + 2;
+			ie->vht_capabilities_len = pos[1];
+		} else if (*pos == WLAN_EID_QOS && pos[1] >= 1) {
+			ie->qosinfo = pos[2];
 		} else if (*pos == WLAN_EID_VENDOR_SPECIFIC) {
 			ret = wpa_parse_generic(pos, end, ie);
 			if (ret < 0)
